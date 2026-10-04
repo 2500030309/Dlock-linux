@@ -1,0 +1,18 @@
+# Build & compilation artifacts
+bin/
+obj/
+*.o
+*.out
+
+# Runtime-generated data & logs
+runtime/
+*.fifo
+/tmp/dlock*
+
+# Editor & OS temporary files
+.DS_Store
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
