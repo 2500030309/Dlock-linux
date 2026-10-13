@@ -1,0 +1,214 @@
+================================================================================
+                    DLOCK: COMMAND EXECUTION CHEATSHEET
+================================================================================
+Ensure you are in the project root directory before executing commands.
+
+================================================================================
+TYPE 1: BUILD & AUTOMATED TEST OPERATIONS
+================================================================================
+
+# 1. Clean and build all binaries (Standard C11, recommended)
+make clean
+make
+
+# 2. Run the complete automated test suite (Unit tests + 10-process stress test)
+make test
+
+# 3. Run individual unit test suites directly
+./bin/test_protocol
+./bin/test_wait_queue
+./bin/test_deadlock
+./bin/test_lock_table
+
+# 4. Optional Sanitizer builds (if debugging memory/races)
+# Note for ThreadSanitizer: on modern Linux/WSL2, run binaries with 'setarch $(uname -m) -R'
+make asan     # AddressSanitizer + UndefinedBehaviorSanitizer
+make tsan     # ThreadSanitizer
+
+
+================================================================================
+TYPE 2: SINGLE-COMMAND OPERATIONS (Direct CLI without entering REPL)
+================================================================================
+First start the server in the background:
+  ./bin/dlockd -p 7070 &
+
+# Operation: Acquire a lock (lock_name, timeout_ms, lease_ms)
+./bin/dlockctl -p 7070 -i client1 lock db_orders 5000 60000
+
+# Operation: Non-blocking try-lock (returns immediately with OK or ERR BUSY)
+./bin/dlockctl -p 7070 -i client2 trylock db_orders 60000
+
+# Operation: Inspect lock holders, queue, and remaining TTL
+./bin/dlockctl -p 7070 -i client1 status db_orders
+
+# Operation: Extend/renew active lease before it expires (token=1, new lease=60000ms)
+./bin/dlockctl -p 7070 -i client1 renew db_orders 1 60000
+
+# Operation: Release/unlock resource using fencing token
+./bin/dlockctl -p 7070 -i client1 unlock db_orders 1
+
+# Operation: Create a counting semaphore resource (allows N concurrent holders)
+./bin/dlockctl -p 7070 -i client1 create db_pool 3
+
+# Operation: Inspect global status of all locks in server
+./bin/dlockctl -p 7070 -i client1 status
+
+
+================================================================================
+TYPE 3: INTERACTIVE REPL OPERATIONS (Interactive Shell Mode)
+================================================================================
+Start the interactive client session:
+  ./bin/dlockctl -p 7070 -i my_client
+
+Inside the interactive prompt (dlock>):
+  dlock> lock my_resource 5000 60000     # Acquire lock with 60s lease (returns OK <token>)
+  dlock> status my_resource              # Check status, active holder & TTL
+  dlock> renew my_resource 1 60000       # Heartbeat/renew lease
+  dlock> unlock my_resource 1            # Release lock
+  dlock> trylock my_resource 60000       # Non-blocking acquisition
+  dlock> create worker_pool 4            # Create semaphore with capacity 4
+  dlock> status                          # Inspect all locks
+  dlock> help                            # List available commands
+  dlock> quit                            # Exit session
+
+
+================================================================================
+TYPE 4: MULTI-WINDOW / 3-TERMINAL LIVE DEMONSTRATIONS
+================================================================================
+
+--------------------------------------------------------------------------------
+4A. THREE-TERMINAL DEMO: MUTUAL EXCLUSION & FIFO QUEUE HANDOFF
+--------------------------------------------------------------------------------
+Open 3 separate terminal windows side by side.
+
+[WINDOW 1: SERVER DAEMON]
+./bin/dlockd -p 7070 -v DEBUG
+
+[WINDOW 2: CLIENT ALICE]
+./bin/dlockctl -p 7070 -i alice
+
+[WINDOW 3: CLIENT BOB]
+./bin/dlockctl -p 7070 -i bob
+
+Execution Sequence:
+  Step 1 (Window 2 - Alice):
+    lock database 0 60000
+    -> Output: OK 1  (Window 1 logs: GRANT database to alice)
+
+  Step 2 (Window 3 - Bob):
+    trylock database 60000
+    -> Output: ERR BUSY  (Proves mutual exclusion)
+
+  Step 3 (Window 3 - Bob):
+    lock database 30000 60000
+    -> Bob's terminal blocks waiting in server's FIFO queue!
+
+  Step 4 (Window 2 - Alice):
+    status database
+    -> Shows: capacity=1 holders=1 (alice), waiters=1 (bob)
+
+  Step 5 (Window 2 - Alice):
+    unlock database 1
+    -> Output: OK
+    -> Watch Window 3 (Bob): Instantly unblocks with OK 2 (FIFO handoff)!
+
+  Step 6 (Window 3 - Bob):
+    unlock database 2
+    -> Output: OK
+
+  Cleanup:
+    Type 'quit' in Window 2 and Window 3. Press Ctrl+C in Window 1.
+
+
+--------------------------------------------------------------------------------
+4B. THREE-TERMINAL DEMO: DEADLOCK CYCLE DETECTION (Wait-For Graph)
+--------------------------------------------------------------------------------
+[WINDOW 1: SERVER DAEMON]
+./bin/dlockd -p 7070 -v DEBUG
+
+[WINDOW 2: CLIENT ALICE]
+./bin/dlockctl -p 7070 -i alice
+
+[WINDOW 3: CLIENT BOB]
+./bin/dlockctl -p 7070 -i bob
+
+Execution Sequence:
+  Step 1 (Window 2 - Alice):
+    lock resA 0 60000
+    -> Output: OK 3
+
+  Step 2 (Window 3 - Bob):
+    lock resB 0 60000
+    -> Output: OK 4
+
+  Step 3 (Window 2 - Alice):
+    lock resB 15000 60000
+    -> Alice blocks waiting on Bob (resB)
+
+  Step 4 (Window 3 - Bob):
+    lock resA 15000 60000
+    -> Output: ERR DEADLOCK!
+    -> Window 1 (Server) logs: WARN Deadlock cycle detected for client 'bob'!
+    -> Server aborts the cyclic request instantly without freezing!
+
+  Step 5 (Cleanup):
+    unlock resB 4         (Window 3 -> Alice unblocks with OK 5)
+    unlock resA 3         (Window 2)
+    unlock resB 5         (Window 2)
+
+
+--------------------------------------------------------------------------------
+4C. THREE-TERMINAL DEMO: DECENTRALIZED RICART-AGRAWALA P2P MUTUAL EXCLUSION
+--------------------------------------------------------------------------------
+Runs 3 peer nodes coordinating mutual exclusion with Lamport clocks without
+any central server.
+
+[WINDOW 1: PEER NODE 0]
+./bin/dlockpeer 0 127.0.0.1:9001 127.0.0.1:9002 127.0.0.1:9003
+
+[WINDOW 2: PEER NODE 1]
+./bin/dlockpeer 1 127.0.0.1:9001 127.0.0.1:9002 127.0.0.1:9003
+
+[WINDOW 3: PEER NODE 2]
+./bin/dlockpeer 2 127.0.0.1:9001 127.0.0.1:9002 127.0.0.1:9003
+
+Execution:
+  Press ENTER in Window 1, Window 2, or Window 3 to request entering the
+  distributed critical section. Observe broadcast REQUEST/REPLY timestamps.
+  Press Ctrl+C to terminate.
+
+
+================================================================================
+TYPE 5: SCRIPTED AUTOMATED DEMONSTRATIONS
+================================================================================
+
+# Demo 1: Race Condition vs. DLock Benchmark
+# Compares unsafe concurrent access (lost updates) vs. DLock (100% accurate)
+make demo
+
+# Demo 2: Automated 2-Party Deadlock Detection
+bash demo/demo_deadlock.sh
+
+# Demo 3: Automated Client Crash & Lease Expiry Recovery
+# Simulates kill -9 on lock holder and shows automatic server wake-up of waiter
+bash demo/demo_lease.sh
+
+
+================================================================================
+TYPE 6: ADMIN FIFO & RUNTIME DIAGNOSTIC OPERATIONS
+================================================================================
+
+# 1. Out-of-band named pipe administration (while server is running):
+echo STATS > /tmp/dlock.ctl       # Dump server stats (grants, timeouts, deadlocks)
+echo DUMP  > /tmp/dlock.ctl       # Dump in-memory lock table snapshot to server log
+echo "LOG DEBUG" > /tmp/dlock.ctl # Dynamically adjust log level to DEBUG
+echo "LOG INFO"  > /tmp/dlock.ctl # Dynamically adjust log level to INFO
+echo SHUTDOWN > /tmp/dlock.ctl    # Request graceful daemon shutdown
+
+# 2. POSIX Signals:
+killall -USR1 dlockd              # Trigger lock table diagnostic dump via SIGUSR1
+killall -TERM dlockd              # Trigger clean shutdown via self-pipe SIGTERM
+
+# 3. Persistent Write-Ahead Log (WAL) Audit:
+cat data/dlock.wal                # View recorded GRANT, RELEASE, EXPIRE tokens
+================================================================================

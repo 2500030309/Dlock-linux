@@ -1,18 +1,17 @@
-# Build & compilation artifacts
+# Binaries and object files
 bin/
 obj/
 *.o
-*.out
+*.gch
 
-# Runtime-generated data & logs
-runtime/
-*.fifo
-/tmp/dlock*
+# Logs and runtime data
+logs/*.log
+!logs/.gitkeep
+data/*.wal
+!data/.gitkeep
 
-# Editor & OS temporary files
-.DS_Store
-*.swp
-*.swo
-*~
-.vscode/
-.idea/
+# Core dumps and temporary files
+core
+core.*
+/tmp/dlock.ctl
+*.tmp
